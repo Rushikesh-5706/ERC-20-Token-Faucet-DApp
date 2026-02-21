@@ -5,21 +5,12 @@ const RPC_URL = import.meta.env.VITE_RPC_URL || "https://ethereum-sepolia-rpc.pu
 const TOKEN_ADDRESS = import.meta.env.VITE_TOKEN_ADDRESS || "";
 const FAUCET_ADDRESS = import.meta.env.VITE_FAUCET_ADDRESS || "";
 
-// Multiple fallback RPCs in case one is down
-const SEPOLIA_RPCS = [
-    "https://ethereum-sepolia-rpc.publicnode.com",
-    "https://sepolia.drpc.org",
-    "https://1rpc.io/sepolia",
-];
-
 class Web3Service {
     constructor() {
-        this.signer = null;
-        this.tokenContract = null;
-        this.faucetContract = null;
         this.currentAccount = null;
     }
 
+    // Our own reliable RPC — never touches MetaMask
     getReadProvider() {
         return new ethers.JsonRpcProvider(RPC_URL);
     }
@@ -28,33 +19,12 @@ class Web3Service {
         return typeof window !== "undefined" && typeof window.ethereum !== "undefined";
     }
 
-    /**
-     * Force MetaMask to use our working RPC for Sepolia.
-     * wallet_addEthereumChain will update the RPC if the chain already exists.
-     * This fixes the Infura rate-limit issue inside MetaMask.
-     */
-    async _ensureSepoliaRpc() {
-        try {
-            await window.ethereum.request({
-                method: "wallet_addEthereumChain",
-                params: [{
-                    chainId: "0xaa36a7",
-                    chainName: "Sepolia Testnet",
-                    nativeCurrency: { name: "SepoliaETH", symbol: "ETH", decimals: 18 },
-                    rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
-                    blockExplorerUrls: ["https://sepolia.etherscan.io"],
-                }],
-            });
-        } catch {
-            // Some wallets don't support this for built-in networks — non-fatal
-        }
-    }
-
     async connectWallet() {
         if (!this.isWalletAvailable()) {
             throw new Error("No wallet detected. Please install MetaMask.");
         }
 
+        // eth_requestAccounts — handled locally by MetaMask, no RPC call
         const accounts = await window.ethereum.request({
             method: "eth_requestAccounts",
         });
@@ -65,10 +35,7 @@ class Web3Service {
 
         this.currentAccount = accounts[0];
 
-        // Force MetaMask to use our reliable Sepolia RPC instead of rate-limited Infura
-        await this._ensureSepoliaRpc();
-
-        // Switch to Sepolia if needed (non-fatal)
+        // eth_chainId — served locally by MetaMask, no RPC to Infura
         try {
             const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
             const chainId = parseInt(chainIdHex, 16);
@@ -82,23 +49,15 @@ class Web3Service {
             // Non-fatal
         }
 
-        // Create signer — wrapped in try/catch for resilience
-        try {
-            const provider = new ethers.BrowserProvider(window.ethereum);
-            this.signer = await provider.getSigner();
-            this.tokenContract = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, this.signer);
-            this.faucetContract = new ethers.Contract(FAUCET_ADDRESS, FAUCET_ABI, this.signer);
-        } catch {
-            this.signer = null;
-            this.tokenContract = null;
-            this.faucetContract = null;
-        }
+        // NO BrowserProvider, NO getSigner() — these trigger eth_blockNumber
+        // through MetaMask's Infura which poisons the rate limiter.
+        // requestTokens() uses window.ethereum.request() directly instead.
 
         return this.currentAccount;
     }
 
     async ensureSignerReady() {
-        if (this.signer && this.faucetContract) return;
+        if (this.currentAccount) return;
         if (this.isWalletAvailable()) {
             await this.connectWallet();
         } else {
@@ -107,11 +66,10 @@ class Web3Service {
     }
 
     disconnectWallet() {
-        this.signer = null;
-        this.tokenContract = null;
-        this.faucetContract = null;
         this.currentAccount = null;
     }
+
+    // ── Read functions — use our own RPC, never MetaMask ─────────────────────
 
     async getBalance(address) {
         const contract = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, this.getReadProvider());
@@ -140,43 +98,62 @@ class Web3Service {
         }
     }
 
+    // ── Write function — pre-populate ALL tx params from our RPC ─────────────
+
     async requestTokens() {
         if (!this.isWalletAvailable()) {
             throw new Error("Wallet not available.");
         }
 
-        // Re-apply our RPC to MetaMask right before claiming
-        await this._ensureSepoliaRpc();
-
-        // Encode function call (pure computation, zero RPC calls)
-        const iface = new ethers.Interface(FAUCET_ABI);
-        const data = iface.encodeFunctionData("requestTokens", []);
-
-        // Get account from MetaMask (local, no RPC)
+        // Get account — local to MetaMask, no RPC
         const accounts = await window.ethereum.request({ method: "eth_accounts" });
         if (!accounts || accounts.length === 0) {
             throw new Error("No accounts connected. Please reconnect your wallet.");
         }
+        const from = accounts[0];
+
+        // Encode function call — pure computation, zero RPC
+        const iface = new ethers.Interface(FAUCET_ABI);
+        const data = iface.encodeFunctionData("requestTokens", []);
+
+        // Get nonce + fee data from OUR RPC (publicnode.com) — not MetaMask's Infura
+        const rpcProvider = this.getReadProvider();
+        const [nonce, feeData] = await Promise.all([
+            rpcProvider.getTransactionCount(from, "pending"),
+            rpcProvider.getFeeData(),
+        ]);
+
+        // Build a FULLY-SPECIFIED transaction so MetaMask doesn't need to query anything.
+        // MetaMask only needs to: show popup → sign → broadcast.
+        const txParams = {
+            from: from,
+            to: FAUCET_ADDRESS,
+            data: data,
+            gas: "0x30D40", // 200,000
+            nonce: "0x" + nonce.toString(16),
+            value: "0x0",
+        };
+
+        // Use EIP-1559 if fee data available, otherwise legacy gasPrice
+        if (feeData.maxFeePerGas) {
+            txParams.maxFeePerGas = "0x" + feeData.maxFeePerGas.toString(16);
+            txParams.maxPriorityFeePerGas = "0x" + (feeData.maxPriorityFeePerGas || 1000000000n).toString(16);
+            txParams.type = "0x2";
+        } else if (feeData.gasPrice) {
+            txParams.gasPrice = "0x" + feeData.gasPrice.toString(16);
+        }
 
         try {
-            // Send transaction DIRECTLY through MetaMask.
-            // MetaMask handles nonce, gas price, signing, broadcasting internally.
             const txHash = await window.ethereum.request({
                 method: "eth_sendTransaction",
-                params: [{
-                    from: accounts[0],
-                    to: FAUCET_ADDRESS,
-                    data: data,
-                    gas: "0x30D40", // 200,000 in hex
-                }],
+                params: [txParams],
             });
 
-            // Wait for receipt using our public read provider (not MetaMask)
+            // Wait for receipt via our own RPC (not MetaMask)
             try {
-                const readProvider = this.getReadProvider();
-                await readProvider.waitForTransaction(txHash, 1, 120000);
+                await rpcProvider.waitForTransaction(txHash, 1, 120000);
             } catch {
-                // Receipt wait may fail but tx was sent — fine
+                // Tx was sent, receipt wait timeout is non-fatal
             }
 
             return txHash;
