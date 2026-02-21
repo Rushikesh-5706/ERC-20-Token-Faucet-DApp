@@ -104,10 +104,27 @@ class Web3Service {
     }
 
     async requestTokens() {
-        await this.ensureSignerReady();
-        const contract = new ethers.Contract(FAUCET_ADDRESS, FAUCET_ABI, this.signer);
+        if (!this.isWalletAvailable()) {
+            throw new Error("Wallet not available.");
+        }
+
+        // Create a FRESH BrowserProvider + signer each time to avoid stale error state.
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        const signer = await provider.getSigner();
+
+        // Build the contract interface to encode the function call data.
+        const iface = new ethers.Interface(FAUCET_ABI);
+        const data = iface.encodeFunctionData("requestTokens", []);
+
         try {
-            const tx = await contract.requestTokens();
+            // Send the raw transaction with explicit gasLimit.
+            // This skips eth_estimateGas + eth_blockNumber calls that were
+            // failing due to MetaMask's internal Infura RPC being rate-limited.
+            const tx = await signer.sendTransaction({
+                to: FAUCET_ADDRESS,
+                data: data,
+                gasLimit: 200000n,
+            });
             await tx.wait();
             return tx.hash;
         } catch (error) {
