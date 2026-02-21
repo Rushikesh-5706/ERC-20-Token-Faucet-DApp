@@ -1,0 +1,27 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_RPC_URL: ${VITE_RPC_URL}
+        VITE_TOKEN_ADDRESS: ${VITE_TOKEN_ADDRESS}
+        VITE_FAUCET_ADDRESS: ${VITE_FAUCET_ADDRESS}
+        VITE_CHAIN_ID: ${VITE_CHAIN_ID:-11155111}
+    container_name: faucet-frontend
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      VITE_RPC_URL: ${VITE_RPC_URL}
+      VITE_TOKEN_ADDRESS: ${VITE_TOKEN_ADDRESS}
+      VITE_FAUCET_ADDRESS: ${VITE_FAUCET_ADDRESS}
+      VITE_CHAIN_ID: ${VITE_CHAIN_ID:-11155111}
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
