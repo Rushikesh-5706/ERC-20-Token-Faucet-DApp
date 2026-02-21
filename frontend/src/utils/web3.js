@@ -1,9 +1,16 @@
 import { ethers } from "ethers";
 import { TOKEN_ABI, FAUCET_ABI } from "./contracts";
 
-const RPC_URL = import.meta.env.VITE_RPC_URL || "";
+const RPC_URL = import.meta.env.VITE_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
 const TOKEN_ADDRESS = import.meta.env.VITE_TOKEN_ADDRESS || "";
 const FAUCET_ADDRESS = import.meta.env.VITE_FAUCET_ADDRESS || "";
+
+// Multiple fallback RPCs in case one is down
+const SEPOLIA_RPCS = [
+    "https://ethereum-sepolia-rpc.publicnode.com",
+    "https://sepolia.drpc.org",
+    "https://1rpc.io/sepolia",
+];
 
 class Web3Service {
     constructor() {
@@ -21,6 +28,28 @@ class Web3Service {
         return typeof window !== "undefined" && typeof window.ethereum !== "undefined";
     }
 
+    /**
+     * Force MetaMask to use our working RPC for Sepolia.
+     * wallet_addEthereumChain will update the RPC if the chain already exists.
+     * This fixes the Infura rate-limit issue inside MetaMask.
+     */
+    async _ensureSepoliaRpc() {
+        try {
+            await window.ethereum.request({
+                method: "wallet_addEthereumChain",
+                params: [{
+                    chainId: "0xaa36a7",
+                    chainName: "Sepolia Testnet",
+                    nativeCurrency: { name: "SepoliaETH", symbol: "ETH", decimals: 18 },
+                    rpcUrls: ["https://ethereum-sepolia-rpc.publicnode.com"],
+                    blockExplorerUrls: ["https://sepolia.etherscan.io"],
+                }],
+            });
+        } catch {
+            // Some wallets don't support this for built-in networks — non-fatal
+        }
+    }
+
     async connectWallet() {
         if (!this.isWalletAvailable()) {
             throw new Error("No wallet detected. Please install MetaMask.");
@@ -36,32 +65,30 @@ class Web3Service {
 
         this.currentAccount = accounts[0];
 
-        // Use raw ethereum request for chain ID check — served locally by MetaMask,
-        // no RPC call needed (unlike provider.getNetwork which calls eth_blockNumber).
+        // Force MetaMask to use our reliable Sepolia RPC instead of rate-limited Infura
+        await this._ensureSepoliaRpc();
+
+        // Switch to Sepolia if needed (non-fatal)
         try {
             const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
             const chainId = parseInt(chainIdHex, 16);
             if (chainId !== 11155111 && chainId !== 31337) {
                 await window.ethereum.request({
                     method: "wallet_switchEthereumChain",
-                    params: [{ chainId: "0xaa36a7" }], // Sepolia
+                    params: [{ chainId: "0xaa36a7" }],
                 });
             }
         } catch {
-            // Non-fatal: continue with whatever network is connected
+            // Non-fatal
         }
 
-        // Create signer for backward compatibility (eval interface uses it).
-        // Wrapped in try-catch so connectWallet still succeeds even if
-        // BrowserProvider hits rate limits — requestTokens doesn't need it.
+        // Create signer — wrapped in try/catch for resilience
         try {
             const provider = new ethers.BrowserProvider(window.ethereum);
             this.signer = await provider.getSigner();
             this.tokenContract = new ethers.Contract(TOKEN_ADDRESS, TOKEN_ABI, this.signer);
             this.faucetContract = new ethers.Contract(FAUCET_ADDRESS, FAUCET_ABI, this.signer);
         } catch {
-            // Signer creation failed due to RPC rate limit — requestTokens
-            // uses window.ethereum.request directly, so it will still work.
             this.signer = null;
             this.tokenContract = null;
             this.faucetContract = null;
@@ -118,39 +145,38 @@ class Web3Service {
             throw new Error("Wallet not available.");
         }
 
-        // Encode the function call data using ethers Interface (pure computation, no RPC).
+        // Re-apply our RPC to MetaMask right before claiming
+        await this._ensureSepoliaRpc();
+
+        // Encode function call (pure computation, zero RPC calls)
         const iface = new ethers.Interface(FAUCET_ABI);
         const data = iface.encodeFunctionData("requestTokens", []);
 
-        // Get current account directly from MetaMask — this is local, no RPC call.
+        // Get account from MetaMask (local, no RPC)
         const accounts = await window.ethereum.request({ method: "eth_accounts" });
         if (!accounts || accounts.length === 0) {
             throw new Error("No accounts connected. Please reconnect your wallet.");
         }
 
         try {
-            // Send transaction DIRECTLY through MetaMask using raw ethereum request.
-            // This completely bypasses ethers.js BrowserProvider and avoids
-            // eth_blockNumber / eth_estimateGas calls that were being rate-limited
-            // by MetaMask's internal Infura RPC.
-            // MetaMask internally handles: nonce, gas price, signing, broadcasting.
+            // Send transaction DIRECTLY through MetaMask.
+            // MetaMask handles nonce, gas price, signing, broadcasting internally.
             const txHash = await window.ethereum.request({
                 method: "eth_sendTransaction",
                 params: [{
                     from: accounts[0],
                     to: FAUCET_ADDRESS,
                     data: data,
-                    gas: "0x30D40", // 200,000 in hex — more than enough for requestTokens()
+                    gas: "0x30D40", // 200,000 in hex
                 }],
             });
 
-            // Wait for the receipt using our PUBLIC read provider (publicnode.com),
-            // NOT MetaMask's rate-limited Infura.
+            // Wait for receipt using our public read provider (not MetaMask)
             try {
                 const readProvider = this.getReadProvider();
                 await readProvider.waitForTransaction(txHash, 1, 120000);
             } catch {
-                // Receipt wait failed but tx was still sent successfully
+                // Receipt wait may fail but tx was sent — fine
             }
 
             return txHash;
