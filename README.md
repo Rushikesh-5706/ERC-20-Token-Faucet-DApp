@@ -24,30 +24,30 @@ This DApp implements a trustless token distribution system on the **Sepolia test
 ┌────────────────────────────────────────────────────────┐
 │              Frontend (React + Ethers.js v6)           │
 │                                                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
-│  │ UI Components│  │ Web3 Service │  │ Eval Interface│ │
-│  │ App.jsx/css  │  │ Alchemy reads│  │ window.__EVAL│ │
-│  │              │  │ MetaMask sign│  │              │ │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘ │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │ UI Components│  │ Web3 Service │  │Eval Interface│  │
+│  │ App.jsx/css  │  │ Alchemy reads│  │ window.__EVAL│  │
+│  │              │  │ MetaMask sign│  │              │  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
 └─────────┼─────────────────┼─────────────────┼──────────┘
           │                 │                 │
           │    ┌────────────┴────────────┐    │
           │    │                         │    │
-     ┌────▼────▼───┐            ┌────────▼────▼───┐
-     │   Alchemy   │            │    MetaMask     │
-     │  JSON-RPC   │            │  Tx Signing    │
-     │  (reads)    │            │  (writes)      │
+     ┌────▼────▼───┐            ┌────────▼────▼──┐
+     │   Alchemy   │            │    MetaMask    │
+     │  JSON-RPC   │            │   Tx Signing   │
+     │  (reads)    │            │   (writes)     │
      └──────┬──────┘            └────────┬───────┘
             │                            │
    ┌────────▼────────────────────────────▼────────┐
-   │          Sepolia Testnet (Chain 11155111)     │
-   │                                               │
+   │          Sepolia Testnet (Chain 11155111)    │
+   │                                              │
    │  ┌─────────────────┐  ┌───────────────────┐  │
-   │  │ FaucetToken      │  │ TokenFaucet       │  │
-   │  │ ERC-20 Mintable  │◄─│ Rate Limiter      │  │
-   │  │ 100M Supply      │  │ Pausable          │  │
+   │  │ FaucetToken     │  │ TokenFaucet       │  │
+   │  │ ERC-20 Mintable │◄─│ Rate Limiter      │  │
+   │  │ 100M Supply     │  │ Pausable          │  │
    │  └─────────────────┘  └───────────────────┘  │
-   └───────────────────────────────────────────────┘
+   └──────────────────────────────────────────────┘
 ```
 
 **Key design:** All read operations (balance, eligibility, cooldown) go through the Alchemy JSON-RPC provider directly. Only transaction signing goes through MetaMask. Receipt polling uses Alchemy — never MetaMask's internal RPC. This prevents rate limiting and ensures evaluator compatibility.
