@@ -63,7 +63,7 @@ class Web3Service {
         try {
             const chainIdHex = await window.ethereum.request({ method: "eth_chainId" });
             const chainId = parseInt(chainIdHex, 16);
-            if (chainId !== 11155111 && chainId !== 31337) {
+            if (chainId !== 11155111) {
                 await window.ethereum.request({
                     method: "wallet_switchEthereumChain",
                     params: [{ chainId: "0xaa36a7" }],
