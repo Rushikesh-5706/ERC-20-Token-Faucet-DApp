@@ -127,26 +127,6 @@ Both contracts are verified on Etherscan with "Exact Match" status. The source c
 
 ---
 
-### 7. Lifetime Limit Reached (Error State)
-
-When a user claims their maximum allowance (100 FCT), the claim button disables and a red "Limit Reached" tag appears to enforce the lifetime claiming cap.
-
-<p align="center">
-  <img src="./Screenshots/07-limit-reached.png" alt="Limit Reached" width="800"/>
-</p>
-
----
-
-### 8. Faucet Paused (Error State)
-
-If the contract owner pauses the faucet in response to an emergency, the UI blocks further claims and alerts users that the system is currently halted.
-
-<p align="center">
-  <img src="./Screenshots/08-faucet-paused.png" alt="Faucet Paused" width="800"/>
-</p>
-
----
-
 ## Video Demonstration
 
 A complete walkthrough of the DApp showing wallet connection, token claiming, cooldown enforcement, and Etherscan verification.
