@@ -118,7 +118,7 @@ export default function App() {
     useEffect(() => {
         if (!account) return;
         fetchData(account);
-        const id = setInterval(() => fetchData(account), 60000);
+        const id = setInterval(() => fetchData(account), 30000);
         return () => clearInterval(id);
     }, [account]);
 
