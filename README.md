@@ -20,35 +20,37 @@ This DApp implements a trustless token distribution system on the **Sepolia test
 
 ## Architecture
 
-```mermaid
-graph TB
-    subgraph Frontend["Frontend Layer — React + Ethers.js v6"]
-        UI["UI Components<br/>App.jsx + App.css"]
-        Web3["Web3 Service<br/>Alchemy reads · MetaMask writes"]
-        Eval["Eval Interface<br/>window.__EVAL__"]
-    end
-
-    subgraph Blockchain["Sepolia Testnet — Chain ID 11155111"]
-        Token["FaucetToken<br/>ERC-20 · Mintable · 100M Supply"]
-        Faucet["TokenFaucet<br/>Rate Limiter · Pausable"]
-    end
-
-    subgraph Infra["Infrastructure"]
-        MetaMask["MetaMask<br/>Transaction Signing"]
-        Alchemy["Alchemy RPC<br/>Read Provider"]
-        Docker["Docker + Nginx<br/>Production Serving"]
-    end
-
-    UI --> Web3
-    Web3 -->|"Read: balance, canClaim,<br/>allowance, cooldown"| Alchemy
-    Alchemy -->|"JSON-RPC"| Token
-    Alchemy -->|"JSON-RPC"| Faucet
-    Web3 -->|"Sign tx"| MetaMask
-    MetaMask -->|"requestTokens()"| Faucet
-    Faucet -->|"mint()"| Token
-    Eval -->|"Programmatic API"| Web3
-    Docker -->|"Serves at :3000"| UI
 ```
+┌────────────────────────────────────────────────────────┐
+│              Frontend (React + Ethers.js v6)           │
+│                                                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐ │
+│  │ UI Components│  │ Web3 Service │  │ Eval Interface│ │
+│  │ App.jsx/css  │  │ Alchemy reads│  │ window.__EVAL│ │
+│  │              │  │ MetaMask sign│  │              │ │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘ │
+└─────────┼─────────────────┼─────────────────┼──────────┘
+          │                 │                 │
+          │    ┌────────────┴────────────┐    │
+          │    │                         │    │
+     ┌────▼────▼───┐            ┌────────▼────▼───┐
+     │   Alchemy   │            │    MetaMask     │
+     │  JSON-RPC   │            │  Tx Signing    │
+     │  (reads)    │            │  (writes)      │
+     └──────┬──────┘            └────────┬───────┘
+            │                            │
+   ┌────────▼────────────────────────────▼────────┐
+   │          Sepolia Testnet (Chain 11155111)     │
+   │                                               │
+   │  ┌─────────────────┐  ┌───────────────────┐  │
+   │  │ FaucetToken      │  │ TokenFaucet       │  │
+   │  │ ERC-20 Mintable  │◄─│ Rate Limiter      │  │
+   │  │ 100M Supply      │  │ Pausable          │  │
+   │  └─────────────────┘  └───────────────────┘  │
+   └───────────────────────────────────────────────┘
+```
+
+**Key design:** All read operations (balance, eligibility, cooldown) go through the Alchemy JSON-RPC provider directly. Only transaction signing goes through MetaMask. Receipt polling uses Alchemy — never MetaMask's internal RPC. This prevents rate limiting and ensures evaluator compatibility.
 
 ---
 
@@ -56,8 +58,8 @@ graph TB
 
 | Contract | Address | Etherscan | Verified | Compiler |
 |---|---|---|---|---|
-| **FaucetToken** (FCT) | `0xb822418aEfE7C0eb71a3E75972fCBb9121662Fc4` | [View on Etherscan ↗](https://sepolia.etherscan.io/address/0xb822418aEfE7C0eb71a3E75972fCBb9121662Fc4) | ✅ Exact Match | Solidity 0.8.20 |
-| **TokenFaucet** | `0x42cBFd60e3bD5c825627e1cf48899d23617ADd4B` | [View on Etherscan ↗](https://sepolia.etherscan.io/address/0x42cBFd60e3bD5c825627e1cf48899d23617ADd4B) | ✅ Exact Match | Solidity 0.8.20 |
+| **FaucetToken** (FCT) | `0xb822418aEfE7C0eb71a3E75972fCBb9121662Fc4` | [View on Etherscan](https://sepolia.etherscan.io/address/0xb822418aEfE7C0eb71a3E75972fCBb9121662Fc4#code) | ✅ Exact Match | Solidity 0.8.20 |
+| **TokenFaucet** | `0x42cBFd60e3bD5c825627e1cf48899d23617ADd4B` | [View on Etherscan](https://sepolia.etherscan.io/address/0x42cBFd60e3bD5c825627e1cf48899d23617ADd4B#code) | ✅ Exact Match | Solidity 0.8.20 |
 
 > **Network:** Sepolia · **Chain ID:** 11155111 · **Optimizer:** Enabled (200 runs)
 
@@ -66,44 +68,62 @@ graph TB
 ## Screenshots
 
 ### 1. Wallet Connection Interface
+
 The landing page prompts users to connect their MetaMask wallet. The editorial design uses Space Mono and DM Sans typography with a warm terracotta accent palette.
 
-![Connect Wallet](Screenshots/01-connect-wallet.png)
+<p align="center">
+  <img src="./Screenshots/01-connect-wallet.png" alt="Connect Wallet" width="800"/>
+</p>
 
 ---
 
 ### 2. Connected Wallet Dashboard
+
 After connecting, users see their FCT balance, remaining lifetime allowance (out of 100 FCT), a progress bar showing claimed percentage, and claim eligibility status with color-coded tags.
 
-![Wallet Connected](Screenshots/02-wallet-connected.png)
+<p align="center">
+  <img src="./Screenshots/02-wallet-connected.png" alt="Wallet Connected" width="800"/>
+</p>
 
 ---
 
 ### 3. MetaMask Transaction Confirmation
+
 Clicking "Claim 10 FCT" opens the MetaMask popup. The transaction calls `requestTokens()` on the TokenFaucet contract. Gas is paid in Sepolia ETH by the user.
 
-![MetaMask Confirm](Screenshots/03-metamask-confirm.png)
+<p align="center">
+  <img src="./Screenshots/03-metamask-confirm.png" alt="MetaMask Confirm" width="400"/>
+</p>
 
 ---
 
 ### 4. Successful Token Claim
+
 After the transaction is mined (~15 seconds), the app shows a green success alert with the transaction hash. The balance and allowance bar update automatically.
 
-![Claim Success](Screenshots/04-claim-success.png)
+<p align="center">
+  <img src="./Screenshots/04-claim-success.png" alt="Claim Success" width="800"/>
+</p>
 
 ---
 
 ### 5. Cooldown Timer
+
 After a successful claim, the 24-hour cooldown activates. The status tag changes from "Ready" (green) to "Cooldown" (amber) with a live countdown timer. The claim button is disabled until the timer expires.
 
-![Cooldown Timer](Screenshots/05-cooldown-timer.png)
+<p align="center">
+  <img src="./Screenshots/05-cooldown-timer.png" alt="Cooldown Timer" width="800"/>
+</p>
 
 ---
 
 ### 6. Etherscan Contract Verification
+
 Both contracts are verified on Etherscan with "Exact Match" status. The source code, constructor arguments, and compiler settings are publicly visible and auditable.
 
-![Etherscan Verified](Screenshots/06-etherscan-verified.png)
+<p align="center">
+  <img src="./Screenshots/06-etherscan-verified.png" alt="Etherscan Verified" width="800"/>
+</p>
 
 ---
 
@@ -144,15 +164,15 @@ cd frontend && npm run dev
 
 | Variable | Description | Example |
 |---|---|---|
-| `SEPOLIA_RPC_URL` | Alchemy/Infura Sepolia endpoint (for Hardhat) | `https://eth-sepolia.g.alchemy.com/v2/...` |
-| `PRIVATE_KEY` | Deployer wallet private key (**never commit**) | `0x41139dc...` |
-| `ETHERSCAN_API_KEY` | For contract source code verification | `9XG18GB...` |
-| `VITE_RPC_URL` | Frontend RPC — baked into Docker build | `https://eth-sepolia.g.alchemy.com/v2/...` |
-| `VITE_TOKEN_ADDRESS` | Deployed FaucetToken address | `0xb822418a...` |
-| `VITE_FAUCET_ADDRESS` | Deployed TokenFaucet address | `0x42cBFd60...` |
-| `VITE_CHAIN_ID` | Target chain ID | `11155111` |
+| `SEPOLIA_RPC_URL` | Alchemy Sepolia endpoint for Hardhat deployments | `https://eth-sepolia.g.alchemy.com/v2/abc123` |
+| `PRIVATE_KEY` | Deployer wallet private key (**never commit**) | `41139dc80a228667106b614...` (64 hex chars) |
+| `ETHERSCAN_API_KEY` | For contract source code verification on Etherscan | `9XG18GB2Y5N44RRHMKUUNDE1...` |
+| `VITE_RPC_URL` | Frontend read provider — baked into Docker at build time | `https://eth-sepolia.g.alchemy.com/v2/abc123` |
+| `VITE_TOKEN_ADDRESS` | Deployed FaucetToken contract address | `0xb822418aEfE7C0eb71a3E75972fCBb9121662Fc4` |
+| `VITE_FAUCET_ADDRESS` | Deployed TokenFaucet contract address | `0x42cBFd60e3bD5c825627e1cf48899d23617ADd4B` |
+| `VITE_CHAIN_ID` | Target blockchain chain ID | `11155111` |
 
-> **Note:** `VITE_*` variables are baked into the static bundle at build time (Vite). If you change them, you must rebuild Docker: `docker compose build --no-cache`.
+> **Note:** `VITE_*` variables are baked into the static bundle at build time by Vite. If you change them, you must rebuild Docker with `docker compose build --no-cache`.
 
 ---
 
@@ -167,7 +187,7 @@ cd frontend && npm run dev
 | **RPC architecture** | Alchemy for reads, MetaMask for writes | Avoids MetaMask RPC rate limits; evaluator-compatible |
 | **Receipt polling** | `alchemyProvider.waitForTransaction()` | Prevents `eth_blockNumber` polling through MetaMask |
 | **Static provider** | Singleton with `staticNetwork: true` | Eliminates per-call `eth_chainId` init overhead |
-| **Frontend theme** | Editorial/utilitarian warm palette | Space Mono + DM Sans typography, terracotta accent |
+| **Frontend theme** | Editorial warm palette | Space Mono + DM Sans typography, terracotta accent |
 
 ---
 
